@@ -25,7 +25,7 @@ src_dir = Path("Penguin")
 
 
 CACHED_DEPENDENCIES = [
-    "openai<=1.97.1",
+    "openai", #<=1.97.1",
     "tqdm",
     "pydantic",
     "pydantic_core",

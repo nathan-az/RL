@@ -78,6 +78,10 @@ EOF
 
 # First copy only the dependency files
 COPY --from=nemo-rl pyproject.toml uv.lock ./
+# for dynamic loading of version and readme
+COPY --from=nemo-rl nemo_rl/__init__.py ./nemo_rl/__init__.py
+COPY --from=nemo-rl nemo_rl/package_info.py ./nemo_rl/package_info.py
+COPY --from=nemo-rl README.md ./
 COPY --from=nemo-rl tools/build-custom-vllm.sh ./tools/build-custom-vllm.sh
 COPY --from=nemo-rl --link 3rdparty/ ./3rdparty/
 
@@ -93,6 +97,7 @@ fi
 # Do everything in one layer to prevent large layers.
 
 # The venv is symlinked to avoid bloating the layer size
+uv lock
 uv sync --link-mode symlink --locked --no-install-project
 uv sync --link-mode symlink --locked --extra vllm --no-install-project
 uv sync --link-mode symlink --locked --extra mcore --no-install-project
