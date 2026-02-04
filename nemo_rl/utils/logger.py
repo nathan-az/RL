@@ -789,15 +789,21 @@ class MLflowLogger(LoggerInterface):
                 mlflow.end_run()
 
             if experiment_name is not None:
+                print(f"DEBUG: Looking for experiment '{experiment_name}' with tracking URI '{mlflow.get_tracking_uri()}'")
                 experiment = mlflow.get_experiment_by_name(experiment_name)
+                print(f"DEBUG: Found experiment: {experiment}")
                 # if name is set but experiment is not found, create it
                 if experiment is None:
-                    mlflow.create_experiment(
-                        name=experiment_name,
-                        **{"artifact_location": cfg.get("artifact_location", log_dir)}
-                        if "artifact_location" in cfg or log_dir
-                        else {},
-                    )
+                    try:
+                        mlflow.create_experiment(
+                            name=experiment_name,
+                            **{"artifact_location": cfg.get("artifact_location")}
+                            if "artifact_location" in cfg
+                            else {},
+                        )
+                    except mlflow.exceptions.MlflowException as e:
+                        if e.error_code != "RESOURCE_ALREADY_EXISTS":
+                            raise
                 # set the experiment context manager
                 mlflow.set_experiment(experiment_name)
             # if run_id is set explicitly, will use. Otherwise, from env var. Otherwise, new run with run name
