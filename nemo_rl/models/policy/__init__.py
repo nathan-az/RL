@@ -265,6 +265,7 @@ class PolicyConfig(TypedDict):
     max_grad_norm: NotRequired[float | int | None]
     refit_buffer_size_gb: NotRequired[float]
     pin_offload_buffers: NotRequired[bool]
+    force_sync_after_offload: NotRequired[bool]
     optimizer: NotRequired[PytorchOptimizerConfig | None]
     scheduler: NotRequired[
         list[SinglePytorchSchedulerConfig | SinglePytorchMilestonesConfig]
