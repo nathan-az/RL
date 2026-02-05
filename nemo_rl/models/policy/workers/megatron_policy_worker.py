@@ -1487,15 +1487,51 @@ class MegatronPolicyWorker(AbstractPolicyWorker, ColocatablePolicyInterface):
         else:
             # Ordinary offload case
             if move_params:
-                for name, param in model.state_dict().items():
-                    new_state_dict = {}
-                    for name, item in model.state_dict().items():
-                        if isinstance(item, torch.Tensor):
-                            item = item.detach().to(
-                                device=device, non_blocking=True, copy=True
-                            )
-                        new_state_dict[name] = item
-                    model.load_state_dict(new_state_dict)
+                if self.cfg.get("pin_offload_buffers", False):
+                    if not hasattr(self, "_model_cpu_buffers"):
+                        self._model_cpu_buffers = {}
+
+                    for name, param in model.named_parameters():
+                        if device == "cpu":
+                            if name not in self._model_cpu_buffers:
+                                self._model_cpu_buffers[name] = torch.zeros_like(
+                                    param.data, device="cpu", pin_memory=True
+                                )
+                            buffer = self._model_cpu_buffers[name]
+                            buffer.copy_(param.data, non_blocking=True)
+                            param.data = buffer
+                        elif device == "cuda":
+                            if param.data.device.type == "cpu":
+                                param.data = param.data.to("cuda", non_blocking=True)
+                            elif param.data.device.type != "cuda":
+                                param.data = param.data.to("cuda", non_blocking=True)
+
+                    for name, buf in model.named_buffers():
+                        if device == "cpu":
+                            if name not in self._model_cpu_buffers:
+                                self._model_cpu_buffers[name] = torch.zeros_like(
+                                    buf.data, device="cpu", pin_memory=True
+                                )
+                            buffer = self._model_cpu_buffers[name]
+                            buffer.copy_(buf.data, non_blocking=True)
+                            buf.data = buffer
+                        elif device == "cuda":
+                            if buf.data.device.type == "cpu":
+                                buf.data = buf.data.to("cuda", non_blocking=True)
+                    # probably only needed for moving to CPU, but keeping
+                    # this seems safer in case any code uses this which executes code off the default CUDA stream
+                    # see https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
+                    torch.cuda.synchronize()
+                else:
+                    for name, param in model.state_dict().items():
+                        new_state_dict = {}
+                        for name, item in model.state_dict().items():
+                            if isinstance(item, torch.Tensor):
+                                item = item.detach().to(
+                                    device=device, non_blocking=True, copy=True
+                                )
+                            new_state_dict[name] = item
+                        model.load_state_dict(new_state_dict)
         return model
 
     def move_optimizer(self, device: str):
@@ -1504,22 +1540,60 @@ class MegatronPolicyWorker(AbstractPolicyWorker, ColocatablePolicyInterface):
             optimizer_state = self.optimizer.state
         else:
             optimizer_state = self.optimizer._get_state()
-        for _, state in optimizer_state.items():
-            # Iterate through the state items (e.g., momentum, variance) for a parameter
-            for k, v in state.items():
-                # Check if the item is a tensor
-                if torch.is_tensor(v):
-                    # Move the tensor to device and update the state dictionary
-                    if device == "cpu":
-                        if v.is_cuda:
-                            state[k] = v.to("cpu")
-                    elif device == "cuda":
-                        if not v.is_cuda:
-                            state[k] = v.to("cuda")
-                    else:
-                        raise ValueError(
-                            f"Invalid device: {device}. Only strings 'cpu' and 'cuda' are supported."
-                        )
+
+        if self.cfg.get("pin_offload_buffers", False):
+            if not hasattr(self, "_optim_cpu_buffers"):
+                self._optim_cpu_buffers = {}
+
+            for param, state in optimizer_state.items():
+                param_id = id(param)
+                if param_id not in self._optim_cpu_buffers:
+                    self._optim_cpu_buffers[param_id] = {}
+
+                # Iterate through the state items (e.g., momentum, variance) for a parameter
+                for k, v in state.items():
+                    # Check if the item is a tensor
+                    if torch.is_tensor(v):
+                        # Move the tensor to device and update the state dictionary
+                        if device == "cpu":
+                            if v.is_cuda:
+                                if k not in self._optim_cpu_buffers[param_id]:
+                                    self._optim_cpu_buffers[param_id][k] = (
+                                        torch.zeros_like(
+                                            v, device="cpu", pin_memory=True
+                                        )
+                                    )
+                                buffer = self._optim_cpu_buffers[param_id][k]
+                                buffer.copy_(v, non_blocking=True)
+                                state[k] = buffer
+                        elif device == "cuda":
+                            if not v.is_cuda:
+                                state[k] = v.to("cuda", non_blocking=True)
+                        else:
+                            raise ValueError(
+                                f"Invalid device: {device}. Only strings 'cpu' and 'cuda' are supported."
+                            )
+            # probably only needed for moving to CPU, but keeping
+            # this seems safer in case any code uses this which executes code off the default CUDA stream
+            # see https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
+            torch.cuda.synchronize()
+        else:
+            for _, state in optimizer_state.items():
+                # Iterate through the state items (e.g., momentum, variance) for a parameter
+                for k, v in state.items():
+                    # Check if the item is a tensor
+                    if torch.is_tensor(v):
+                        # Move the tensor to device and update the state dictionary
+                        if device == "cpu":
+                            if v.is_cuda:
+                                state[k] = v.to("cpu")
+                        elif device == "cuda":
+                            if not v.is_cuda:
+                                state[k] = v.to("cuda")
+                        else:
+                            raise ValueError(
+                                f"Invalid device: {device}. Only strings 'cpu' and 'cuda' are supported."
+                            )
 
     def save_checkpoint(
         self,
