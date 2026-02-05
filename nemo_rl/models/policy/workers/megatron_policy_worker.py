@@ -1523,15 +1523,14 @@ class MegatronPolicyWorker(AbstractPolicyWorker, ColocatablePolicyInterface):
                     # see https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                     torch.cuda.synchronize()
                 else:
-                    for name, param in model.state_dict().items():
-                        new_state_dict = {}
-                        for name, item in model.state_dict().items():
-                            if isinstance(item, torch.Tensor):
-                                item = item.detach().to(
-                                    device=device, non_blocking=True, copy=True
-                                )
-                            new_state_dict[name] = item
-                        model.load_state_dict(new_state_dict)
+                    new_state_dict = {}
+                    for name, item in model.state_dict().items():
+                        if isinstance(item, torch.Tensor):
+                            item = item.detach().to(
+                                device=device, non_blocking=True, copy=True
+                            )
+                        new_state_dict[name] = item
+                    model.load_state_dict(new_state_dict)
         return model
 
     def move_optimizer(self, device: str):
